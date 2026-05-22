@@ -1,25 +1,22 @@
-version: "3"
 services:
   app:
     build: .
     env_file:
       - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./config.yaml:/config/config.yaml
-    command:
-      - /app/wait-for-it.sh
-      - ${REDIS_URL}
-      - --timeout=60
-      - --strict
-      - --
-      - /app/rss_sync
     restart: unless-stopped
     ports:
       - "8080:8080"
+      - "8081:8081"
   db:
-    image: 'redis:latest'
-    environment:
-      - ALLOW_EMPTY_PASSWORD=yes
+    image: 'redis:8-alpine'
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
