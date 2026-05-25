@@ -1,0 +1,15 @@
+.git
+.gitignore
+.gitlab-ci.yml
+.idea
+.claude
+.env
+.env.*
+config.yaml
+data
+rss_gitlab_sync
+*.db
+screenshots
+README.md
+LICENSE
+docker-compose.yaml

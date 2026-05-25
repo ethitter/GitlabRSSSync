@@ -1,0 +1,87 @@
+stages:
+  - build
+  - image
+  - manifest
+
+variables:
+  GOFLAGS: "-mod=readonly"
+  GOPATH: "$CI_PROJECT_DIR/.go"
+
+build:binary:
+  stage: build
+  image: golang:1.26
+  parallel:
+    matrix:
+      - GOOS: linux
+        GOARCH: [amd64, arm64]
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod/
+  script:
+    - CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH
+      go build -trimpath -ldflags="-s -w"
+      -o rss_gitlab_sync-$GOOS-$GOARCH .
+  artifacts:
+    name: "rss_gitlab_sync-$GOOS-$GOARCH-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - rss_gitlab_sync-$GOOS-$GOARCH
+    expire_in: 30 days
+
+build:image:
+  stage: image
+  needs:
+    - build:binary
+  parallel:
+    matrix:
+      - ARCH: [amd64, arm64]
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "$CI_PROJECT_DIR"
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile.ci"
+        --customPlatform=linux/$ARCH
+        --build-arg TARGETARCH=$ARCH
+        --destination="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA-$ARCH"
+
+manifest:image:
+  stage: manifest
+  needs:
+    - build:image
+  image:
+    name: mplatform/manifest-tool:alpine
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_TAG
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_TAG"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_SHORT_SHA latest"
+    - if: $CI_COMMIT_BRANCH
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_SHORT_SHA"
+  script:
+    - |
+      for t in $IMAGE_TAGS; do
+        manifest-tool \
+          --username "$CI_REGISTRY_USER" \
+          --password "$CI_REGISTRY_PASSWORD" \
+          push from-args \
+          --platforms linux/amd64,linux/arm64 \
+          --template "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA-ARCH" \
+          --target "$CI_REGISTRY_IMAGE:$t"
+      done
