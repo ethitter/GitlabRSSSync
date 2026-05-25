@@ -1,0 +1,55 @@
+stages:
+  - build
+  - image
+
+variables:
+  GOFLAGS: "-mod=readonly"
+  GOPATH: "$CI_PROJECT_DIR/.go"
+
+build:binary:
+  stage: build
+  image: golang:1.26
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod/
+  script:
+    - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o rss_gitlab_sync .
+  artifacts:
+    name: "rss_gitlab_sync-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - rss_gitlab_sync
+    expire_in: 30 days
+
+build:image:
+  stage: image
+  needs: []
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_TAG
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_TAG"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_SHORT_SHA latest"
+    - if: $CI_COMMIT_BRANCH
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_SHORT_SHA"
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - |
+      DESTS=""
+      for t in $IMAGE_TAGS; do
+        DESTS="$DESTS --destination=$CI_REGISTRY_IMAGE:$t"
+      done
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        $DESTS

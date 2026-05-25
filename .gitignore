@@ -2,3 +2,4 @@
 .idea
 *.db
 data
+rss_gitlab_sync
